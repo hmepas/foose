@@ -15,6 +15,6 @@ If only one file found, it'll be open right up
 ```
 curl https://raw.githubusercontent.com/hmepas/foose/master/foose > ~/bin/foose
 chmod +x ~/bin/foose
-echo 'export $EDITOR=vim' >> ~/.bashrc # or whatever your favorite text editor is
+echo 'export EDITOR=/usr/bin/vim' >> ~/.bashrc # or whatever your favorite text editor is
 ```
 or give any other name which suits you, like ~/bin/p or ~/bin/ctrlp
