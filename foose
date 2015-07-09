@@ -1,0 +1,185 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use utf8;
+
+=pod
+
+    $Id:$
+
+=head1 NAME
+
+    foose
+
+=head1 SYNOPSIS
+
+    $ foose cfg # will do `find | grep cfg` and let you choose file for edit
+
+=head1 DESCRIPTION
+
+    Foose is a perl script for finding files then opening it in your prefered editor, set via $EDITOR
+    Foose stands for Find chOOSE
+
+    You might find aliasing foose to p usefull:
+        alias p=foose
+
+    For navigation in file select list you could use <UP>/<DOWN> or kj if you like vim-like movements.
+    Press enter to open file in specified editor
+
+=cut
+
+package TermUtils;
+
+local $| = 1;
+
+use Term::ReadKey;
+
+sub get_cur_y {
+    ReadMode 4;
+    print "\033[6n";
+    local $/ = 'R';
+    my $coord = <STDIN>;
+    my ($row, $col) = $coord =~ m/(\d+)\;(\d+)/;
+    ReadMode 0;
+    return $row;
+}
+
+sub roll_back_lines {
+    my $lines = shift;
+    my $current_row = get_cur_y();
+
+    printf "\e[%d;%dH", $current_row-$lines, 1;
+    print  "\e[J";
+}
+
+package Menu;
+
+use Mouse;
+
+has 'list' => (is => 'ro', isa => 'ArrayRef', auto_deref => 1);
+has title => (is => 'ro', isa => 'Str');
+has current => (is => 'rw', isa => 'Int', default => 1);
+has amount => (is => 'ro', isa => 'Int', lazy => 1, default => sub { return scalar @{$_[0]->list} });
+has height => (is => 'ro', isa => 'Int', lazy => 1, default => sub { shift->amount + 1 });
+
+sub BUILDARGS { shift; return { title => shift, list => \@_ } }
+
+sub previous {
+    my $self = shift;
+    $self->current( $self->current - 1) if $self->current > 1;
+    return $self->current;
+}
+
+sub next {
+    my $self = shift;
+    $self->current( $self->current + 1) if $self->current < $self->amount;
+    return $self->current;
+}
+
+sub item {
+    my ($self, $i) = @_;
+    return $self->list->[$i-1];
+}
+
+Menu->meta->make_immutable;
+
+package MenuWidget;
+
+use Mouse;
+extends 'Menu';
+
+sub print {
+    my $self = shift;
+    print $self->title . "\n";
+    for(my $i = 1; $i <= $self->amount; $i++) {
+        my $item_s = $self->item($i) . "\n";
+        if($i == $self->current) {
+            print ">\t$item_s";
+        } else {
+            print "\t$item_s";
+        }
+    }
+}
+
+sub clear {
+    my $self = shift;
+    TermUtils::roll_back_lines($self->height);
+}
+
+MenuWidget->meta->make_immutable;
+
+package main;
+
+use Term::ReadKey;
+use Time::HiRes qw/usleep/;
+use Getopt::Long;
+
+GetOptions("help" => sub {
+    system("podselect -section NAME -section SYNOPSIS -section DESCRIPTION $0 | pod2text");
+});
+
+my $editor = $ENV{'EDITOR'} or err('please set editor via $EDITOR enviroment variable');
+
+my $glob = $ARGV[0] or err("Usage:\t$0 <search_pattern>\n\t$0 --help #for help");
+
+my @files = find_grep($glob) or err("No files found");
+err("File list too long") if @files> 20;
+
+exec($editor, $files[0]) if @files == 1;
+
+my $menu = MenuWidget->new("Edit in $editor: ", @files);
+my $choosen = $menu->item( choose($menu) );
+
+exec($editor, $choosen);
+
+sub choose {
+    my $menu = shift;
+    while(1) {
+        $menu->print;
+        ReadMode 3;
+        my $key;
+        while ( !defined( $key = ReadLine(-1) ) ) {
+            usleep(500);
+        }
+        ReadMode 0;
+        if(key_previous($key)) {
+            $menu->previous;
+        } elsif(key_next($key)) {
+            $menu->next;
+        } elsif($key eq "\n") {
+            return $menu->current;
+        }
+        $menu->clear;
+    }
+}
+
+sub find_grep {
+    my $glob = shift;
+    my @files;
+    open(my $find_grep, '-|', "find . | grep '$glob'") or die "can't run find-grep: $!";
+    while(<$find_grep>) {
+        chomp;
+        push @files, $_;
+    }
+    err("No files found") unless @files;
+    err("File list too long") if @files> 20;
+    return @files;
+}
+
+sub key_previous {
+    my $key = shift;
+    return ($key eq 'k' || $key eq "\e[A") ? 1 : 0;
+}
+
+sub key_next {
+    my $key = shift;
+    return ($key eq 'j' || $key eq "\e[B") ? 1 : 0;
+}
+
+sub err {
+    my $msg = shift;
+    print "$msg\n";
+    exit(1);
+}
+
